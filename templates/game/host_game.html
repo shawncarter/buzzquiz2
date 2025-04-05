@@ -1,0 +1,432 @@
+{% extends 'game/base.html' %}
+
+{% block title %}Host Game: {{ game.name }}{% endblock %}
+
+{% block header %}{{ game.name }} <span class="badge bg-primary">{{ game.code }}</span>{% endblock %}
+
+{% block extra_css %}
+<style>
+    .player-list {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    
+    .buzz-list {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    
+    .qr-container {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    
+    #game-controls {
+        margin-bottom: 30px;
+    }
+    
+    .buzz-item {
+        border-left: 4px solid #ccc;
+        transition: all 0.3s ease;
+    }
+    
+    .buzz-item.correct {
+        border-left-color: #28a745;
+        background-color: rgba(40, 167, 69, 0.1);
+    }
+    
+    .buzz-item.incorrect {
+        border-left-color: #dc3545;
+        background-color: rgba(220, 53, 69, 0.1);
+    }
+    
+    .buzz-time {
+        font-family: monospace;
+        font-size: 0.9rem;
+    }
+    
+    .round-badge {
+        font-size: 1.1rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <!-- Left Column - Game Controls & Player List -->
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h3 class="card-title h5 mb-0">Game Information</h3>
+            </div>
+            <div class="card-body">
+                <div class="qr-container mb-3">
+                    <div id="qrcode"></div>
+                    <div class="mt-2">
+                        <small class="text-muted">Scan to join or share code: <strong>{{ game.code }}</strong></small>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">Join URL: <a href="{{ game_url }}" target="_blank">{{ game_url }}</a></small>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted"><a href="{% url 'websocket_test' game_code=game.code %}" target="_blank">Connection Diagnostics</a></small>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted"><a href="{% url 'test_game' game_code=game.code %}" target="_blank">Test Game Interface</a></small>
+                    </div>
+                </div>
+                
+                <div id="game-controls" class="text-center">
+                    <div class="round-badge mb-3">
+                        Round: <span id="current-round" class="badge bg-secondary">{{ game.current_round }}</span>
+                    </div>
+                    <div class="btn-group d-flex" role="group">
+                        <button id="start-round-btn" class="btn btn-success w-100">Start Round</button>
+                        <button id="end-round-btn" class="btn btn-danger w-100" disabled>End Round</button>
+                    </div>
+                </div>
+                
+                <div id="connection-status" class="alert alert-secondary mb-4">
+                    Waiting to connect...
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h3 class="card-title h5 mb-0">Players</h3>
+                <span class="badge bg-light text-dark" id="player-count">{{ players|length }}</span>
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush player-list" id="player-list">
+                    {% for player in players %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            {{ player.name }}
+                            <span class="badge bg-primary">{{ player.score }}</span>
+                        </li>
+                    {% empty %}
+                        <li class="list-group-item text-center text-muted">No players have joined yet</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Right Column - Buzz Results -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h3 class="card-title h5 mb-0">Buzz Results</h3>
+            </div>
+            <div class="card-body">
+                <div id="round-status" class="alert alert-info text-center">
+                    Waiting to start round {{ game.current_round }}
+                </div>
+                
+                <div class="buzz-list" id="buzz-list">
+                    <div class="text-center text-muted py-5">
+                        <p>Players' buzz-ins will appear here</p>
+                        <p><small>First player to buzz will be at the top</small></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let gameSocket = null;
+    let currentRound = {{ game.current_round }};
+    let gameActive = false;
+    let lastRefresh = Date.now();
+    
+    // DOM Elements
+    const qrcodeContainer = document.getElementById('qrcode');
+    const startRoundBtn = document.getElementById('start-round-btn');
+    const endRoundBtn = document.getElementById('end-round-btn');
+    const currentRoundDisplay = document.getElementById('current-round');
+    const roundStatusDisplay = document.getElementById('round-status');
+    const playerListElement = document.getElementById('player-list');
+    const playerCountElement = document.getElementById('player-count');
+    const buzzListElement = document.getElementById('buzz-list');
+    const connectionStatus = document.getElementById('connection-status');
+    
+    // Generate QR code
+    new QRCode(qrcodeContainer, {
+        text: '{{ game_url }}',
+        width: 128,
+        height: 128
+    });
+    
+    // WebSocket Connection
+    const gameCode = '{{ game.code }}';
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const wsUrl = `${wsProtocol}${window.location.host}/ws/game/${gameCode}/`;
+    console.log(`Connecting to WebSocket at ${wsUrl}`);
+    
+    // Create and connect the WebSocket
+    function connectWebSocket() {
+        gameSocket = new WebSocket(wsUrl);
+        
+        gameSocket.onopen = function(e) {
+            console.log('WebSocket connection established');
+            connectionStatus.textContent = 'Connected';
+            connectionStatus.className = 'alert alert-success mb-4';
+            
+            // Ping to verify connection
+            sendMessage('ping', {
+                data: 'Test connection from host'
+            });
+            
+            // Request current game state
+            sendMessage('get_game_state');
+        };
+        
+        gameSocket.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            console.log('Received message:', data);
+            
+            switch(data.type) {
+                case 'game_state':
+                    handleGameState(data);
+                    break;
+                case 'player_list':
+                    handlePlayerList(data.players);
+                    break;
+                case 'buzz_order':
+                    handleBuzzOrder(data.ordered_buzzes, data.round);
+                    break;
+                case 'round_state':
+                    handleRoundState(data);
+                    break;
+                case 'pong':
+                    console.log('Pong received: Connection confirmed');
+                    break;
+                case 'error':
+                    console.error('Error from server:', data.message);
+                    alert(`Error: ${data.message}`);
+                    break;
+            }
+        };
+        
+        gameSocket.onclose = function(e) {
+            connectionStatus.textContent = 'Disconnected. Please refresh the page.';
+            connectionStatus.className = 'alert alert-danger mb-4';
+            
+            startRoundBtn.disabled = true;
+            endRoundBtn.disabled = true;
+            
+            if (e.wasClean) {
+                console.log(`Connection closed cleanly, code=${e.code}, reason=${e.reason}`);
+            } else {
+                console.error('Connection died');
+            }
+        };
+        
+        gameSocket.onerror = function(error) {
+            console.error('WebSocket Error:', error);
+            connectionStatus.textContent = 'Connection error. Please refresh the page.';
+            connectionStatus.className = 'alert alert-danger mb-4';
+        };
+    }
+    
+    // Helper function to send messages - exactly like the test_game.html
+    function sendMessage(type, data = {}) {
+        if (!gameSocket || gameSocket.readyState !== WebSocket.OPEN) {
+            console.error('Cannot send message: Socket not connected');
+            return false;
+        }
+        
+        const message = {
+            type: type,
+            ...data
+        };
+        
+        gameSocket.send(JSON.stringify(message));
+        console.log('Sent message:', message);
+        return true;
+    }
+    
+    // Message handlers
+    function handleGameState(data) {
+        currentRound = data.current_round;
+        currentRoundDisplay.textContent = currentRound;
+        handlePlayerList(data.players);
+        lastRefresh = Date.now();
+        console.log(`Game state updated: Round ${currentRound}`);
+    }
+    
+    function handlePlayerList(players) {
+        playerListElement.innerHTML = '';
+        
+        if (players.length === 0) {
+            const emptyItem = document.createElement('li');
+            emptyItem.className = 'list-group-item text-center text-muted';
+            emptyItem.textContent = 'No players have joined yet';
+            playerListElement.appendChild(emptyItem);
+        } else {
+            players.forEach(player => {
+                const playerItem = document.createElement('li');
+                playerItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+                playerItem.innerHTML = `
+                    ${player.name}
+                    <span class="badge bg-primary">${player.score}</span>
+                `;
+                playerListElement.appendChild(playerItem);
+            });
+        }
+        
+        playerCountElement.textContent = players.length;
+        lastRefresh = Date.now();
+        console.log(`Player list updated with ${players.length} players`);
+    }
+    
+    function handleBuzzOrder(buzzes, round) {
+        if (round !== currentRound) return;
+        
+        buzzListElement.innerHTML = '';
+        
+        if (buzzes.length === 0) {
+            buzzListElement.innerHTML = `
+                <div class="text-center text-muted py-5">
+                    <p>No players have buzzed in yet</p>
+                    <p><small>Waiting for players to buzz...</small></p>
+                </div>
+            `;
+            return;
+        }
+        
+        buzzes.forEach((buzz, index) => {
+            const buzzItem = document.createElement('div');
+            buzzItem.className = 'buzz-item p-3 mb-2';
+            
+            if (buzz.is_correct === true) {
+                buzzItem.classList.add('correct');
+            } else if (buzz.is_correct === false) {
+                buzzItem.classList.add('incorrect');
+            }
+            
+            // Format timestamp for display
+            const buzzDate = new Date(buzz.timestamp);
+            const formattedTime = buzzDate.toISOString().substr(11, 12);
+            const msTime = buzz.timestamp; // Raw millisecond timestamp
+            
+            buzzItem.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>#${index + 1}:</strong> ${buzz.player_name}
+                        <span class="buzz-time ms-2">${formattedTime}</span>
+                        <span class="badge bg-secondary ms-2">${msTime} ms</span>
+                    </div>
+                    <div class="btn-group btn-group-sm">
+                        <button class="btn btn-outline-success mark-correct" data-player-id="${buzz.player_id}">
+                            <i class="bi bi-check"></i> Correct
+                        </button>
+                        <button class="btn btn-outline-danger mark-incorrect" data-player-id="${buzz.player_id}">
+                            <i class="bi bi-x"></i> Incorrect
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            buzzListElement.appendChild(buzzItem);
+            
+            // Add event listeners to the buttons
+            const correctBtn = buzzItem.querySelector('.mark-correct');
+            const incorrectBtn = buzzItem.querySelector('.mark-incorrect');
+            
+            correctBtn.addEventListener('click', () => markAnswer(buzz.player_id, true));
+            incorrectBtn.addEventListener('click', () => markAnswer(buzz.player_id, false));
+        });
+    }
+    
+    function handleRoundState(data) {
+        currentRound = data.round;
+        currentRoundDisplay.textContent = currentRound;
+        
+        if (data.state === 'started') {
+            gameActive = true;
+            roundStatusDisplay.textContent = `Round ${currentRound} is active - Players can buzz in!`;
+            roundStatusDisplay.className = 'alert alert-success text-center';
+            startRoundBtn.disabled = true;
+            endRoundBtn.disabled = false;
+            
+            // Clear buzz list
+            buzzListElement.innerHTML = `
+                <div class="text-center text-muted py-5">
+                    <p>No players have buzzed in yet</p>
+                    <p><small>Waiting for players to buzz...</small></p>
+                </div>
+            `;
+            
+            console.log(`Round ${currentRound} started`);
+        } else if (data.state === 'ended') {
+            gameActive = false;
+            roundStatusDisplay.textContent = `Round ${currentRound} has ended`;
+            roundStatusDisplay.className = 'alert alert-secondary text-center';
+            startRoundBtn.disabled = false;
+            endRoundBtn.disabled = true;
+            
+            console.log(`Round ${currentRound} ended`);
+        }
+    }
+    
+    // Button Event Listeners
+    startRoundBtn.addEventListener('click', function() {
+        // Set UI feedback
+        startRoundBtn.disabled = true;
+        startRoundBtn.textContent = 'Starting...';
+        
+        console.log('Starting round');
+        
+        // Send the message exactly like test_game.html
+        if (sendMessage('start_round', { is_host: true })) {
+            console.log('Start round message sent successfully');
+            
+            // Set a timeout to re-enable the button if no response
+            setTimeout(() => {
+                if (startRoundBtn.textContent === 'Starting...') {
+                    startRoundBtn.textContent = 'Start Round';
+                    startRoundBtn.disabled = false;
+                    console.warn('No response received within timeout');
+                }
+            }, 3000);
+        } else {
+            // Failed to send
+            alert('Connection error. Please refresh the page and try again.');
+            startRoundBtn.textContent = 'Start Round';
+            startRoundBtn.disabled = false;
+        }
+    });
+    
+    endRoundBtn.addEventListener('click', function() {
+        console.log('Ending round');
+        sendMessage('end_round', { is_host: true });
+    });
+    
+    function markAnswer(playerId, isCorrect) {
+        sendMessage('judge_answer', {
+            is_host: true,
+            player_id: playerId,
+            is_correct: isCorrect,
+            round: currentRound
+        });
+    }
+    
+    // Set up periodic refresh (every 5 seconds)
+    setInterval(function() {
+        if (gameSocket && gameSocket.readyState === WebSocket.OPEN) {
+            // Only refresh if it's been more than 5 seconds since last update
+            if (Date.now() - lastRefresh > 5000) {
+                console.log('Requesting game state refresh');
+                sendMessage('get_game_state');
+            }
+        }
+    }, 5000);
+    
+    // Connect when the page loads
+    connectWebSocket();
+</script>
+{% endblock %}

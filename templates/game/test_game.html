@@ -1,0 +1,327 @@
+{% extends 'game/base.html' %}
+
+{% block title %}Test Game{% endblock %}
+
+{% block header %}Test Game{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h3 class="card-title h5 mb-0">Game Test Interface</h3>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <strong>Note:</strong> This is a test interface to help debug WebSocket connections and game functionality.
+                </div>
+                
+                <div class="mb-4">
+                    <h4>Game Information</h4>
+                    <div class="mb-3">
+                        <label class="form-label">Game Code:</label>
+                        <input type="text" id="game-code" class="form-control" value="{{ game_code }}" />
+                    </div>
+                    <div class="d-grid">
+                        <button id="connect-btn" class="btn btn-primary">Connect</button>
+                    </div>
+                </div>
+                
+                <div id="connection-status" class="alert alert-secondary mb-4">
+                    Not connected
+                </div>
+                
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header bg-secondary text-white">
+                                <h4 class="card-title h6 mb-0">Player Controls</h4>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label class="form-label">Player Name:</label>
+                                    <input type="text" id="player-name" class="form-control" value="Test Player" />
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Device ID:</label>
+                                    <input type="text" id="device-id" class="form-control" value="test_device_{{ current_time }}" readonly />
+                                </div>
+                                <div class="d-grid gap-2">
+                                    <button id="register-btn" class="btn btn-success" disabled>Register Player</button>
+                                    <button id="buzz-btn" class="btn btn-danger" disabled>Buzz!</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header bg-secondary text-white">
+                                <h4 class="card-title h6 mb-0">Host Controls</h4>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label class="form-label">Current Round:</label>
+                                    <input type="text" id="current-round" class="form-control" value="1" readonly />
+                                </div>
+                                <div class="d-grid gap-2">
+                                    <button id="start-round-btn" class="btn btn-success" disabled>Start Round</button>
+                                    <button id="end-round-btn" class="btn btn-warning" disabled>End Round</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header bg-secondary text-white">
+                        <h4 class="card-title h6 mb-0">Log</h4>
+                    </div>
+                    <div class="card-body p-0">
+                        <pre id="log-output" class="p-3 mb-0" style="height: 200px; overflow-y: auto; background-color: #f8f9fa;"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let gameSocket = null;
+    let playerId = null;
+    let gameActive = false;
+    let currentRound = 1;
+    
+    // DOM Elements
+    const gameCodeInput = document.getElementById('game-code');
+    const connectBtn = document.getElementById('connect-btn');
+    const registerBtn = document.getElementById('register-btn');
+    const buzzBtn = document.getElementById('buzz-btn');
+    const startRoundBtn = document.getElementById('start-round-btn');
+    const endRoundBtn = document.getElementById('end-round-btn');
+    const playerNameInput = document.getElementById('player-name');
+    const deviceIdInput = document.getElementById('device-id');
+    const currentRoundInput = document.getElementById('current-round');
+    const connectionStatus = document.getElementById('connection-status');
+    const logOutput = document.getElementById('log-output');
+    
+    // Logging function
+    function log(message, type = 'info') {
+        const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+        const logLine = document.createElement('div');
+        
+        let color = '';
+        if (type === 'error') color = 'color: #dc3545;';
+        if (type === 'success') color = 'color: #28a745;';
+        if (type === 'warning') color = 'color: #ffc107;';
+        if (type === 'received') color = 'color: #6f42c1;';
+        if (type === 'sent') color = 'color: #17a2b8;';
+        
+        logLine.innerHTML = `<span style="color: #6c757d;">[${timestamp}]</span> <span style="${color}">${message}</span>`;
+        logOutput.appendChild(logLine);
+        logOutput.scrollTop = logOutput.scrollHeight;
+    }
+    
+    // Connect to WebSocket
+    connectBtn.addEventListener('click', function() {
+        const gameCode = gameCodeInput.value.trim();
+        
+        if (!gameCode) {
+            alert('Please enter a game code');
+            return;
+        }
+        
+        // Close existing connection if any
+        if (gameSocket) {
+            gameSocket.close();
+            gameSocket = null;
+        }
+        
+        // Update UI
+        connectionStatus.textContent = 'Connecting...';
+        connectionStatus.className = 'alert alert-warning mb-4';
+        
+        // Create WebSocket connection
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const wsUrl = `${wsProtocol}${window.location.host}/ws/game/${gameCode}/`;
+        
+        log(`Connecting to ${wsUrl}`, 'info');
+        
+        gameSocket = new WebSocket(wsUrl);
+        
+        gameSocket.onopen = function(e) {
+            connectionStatus.textContent = 'Connected';
+            connectionStatus.className = 'alert alert-success mb-4';
+            registerBtn.disabled = false;
+            startRoundBtn.disabled = false;
+            
+            log('WebSocket connection established', 'success');
+            
+            // Ping to verify connection
+            sendMessage('ping', {
+                data: 'Test connection'
+            });
+        };
+        
+        gameSocket.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            log(`Received: ${data.type}`, 'received');
+            console.log('Received message:', data);
+            
+            switch(data.type) {
+                case 'join_confirmed':
+                    handleJoinConfirmed(data);
+                    break;
+                case 'game_state':
+                    handleGameState(data);
+                    break;
+                case 'player_list':
+                    log(`Player list updated: ${data.players.length} players`, 'info');
+                    break;
+                case 'buzz_order':
+                    log(`Buzz order: ${JSON.stringify(data.ordered_buzzes)}`, 'info');
+                    break;
+                case 'round_state':
+                    handleRoundState(data);
+                    break;
+                case 'pong':
+                    log('Pong received: Connection confirmed', 'success');
+                    break;
+                case 'error':
+                    log(`Error: ${data.message}`, 'error');
+                    break;
+            }
+        };
+        
+        gameSocket.onclose = function(e) {
+            connectionStatus.textContent = 'Disconnected';
+            connectionStatus.className = 'alert alert-danger mb-4';
+            
+            registerBtn.disabled = true;
+            buzzBtn.disabled = true;
+            startRoundBtn.disabled = true;
+            endRoundBtn.disabled = true;
+            
+            if (e.wasClean) {
+                log(`Connection closed cleanly, code=${e.code}, reason=${e.reason}`, 'warning');
+            } else {
+                log('Connection died', 'error');
+            }
+        };
+        
+        gameSocket.onerror = function(error) {
+            log(`WebSocket Error: ${error.message || 'Unknown error'}`, 'error');
+        };
+    });
+    
+    // Register player
+    registerBtn.addEventListener('click', function() {
+        const playerName = playerNameInput.value.trim();
+        const deviceId = deviceIdInput.value.trim();
+        
+        if (!playerName) {
+            alert('Please enter a player name');
+            return;
+        }
+        
+        log(`Registering player: ${playerName}`, 'sent');
+        
+        sendMessage('join_game', {
+            name: playerName,
+            device_id: deviceId,
+            buzzer_sound: 'default'
+        });
+    });
+    
+    // Buzz
+    buzzBtn.addEventListener('click', function() {
+        if (!playerId || !gameActive) {
+            alert('Cannot buzz: Game not active or player not registered');
+            return;
+        }
+        
+        log('Buzzing!', 'sent');
+        
+        sendMessage('buzz', {
+            player_id: playerId,
+            timestamp: Date.now(),
+            round: currentRound
+        });
+    });
+    
+    // Start round
+    startRoundBtn.addEventListener('click', function() {
+        log('Starting round', 'sent');
+        
+        sendMessage('start_round', {
+            is_host: true
+        });
+    });
+    
+    // End round
+    endRoundBtn.addEventListener('click', function() {
+        log('Ending round', 'sent');
+        
+        sendMessage('end_round', {
+            is_host: true
+        });
+    });
+    
+    // Helper function to send messages
+    function sendMessage(type, data) {
+        if (!gameSocket || gameSocket.readyState !== WebSocket.OPEN) {
+            log('Cannot send message: Socket not connected', 'error');
+            return;
+        }
+        
+        const message = {
+            type: type,
+            ...data
+        };
+        
+        gameSocket.send(JSON.stringify(message));
+        log(`Sent: ${type}`, 'sent');
+        console.log('Sent message:', message);
+    }
+    
+    // Message handlers
+    function handleJoinConfirmed(data) {
+        playerId = data.player_id;
+        log(`Player registered with ID: ${playerId}`, 'success');
+        
+        buzzBtn.disabled = false;
+    }
+    
+    function handleGameState(data) {
+        currentRound = data.current_round;
+        currentRoundInput.value = currentRound;
+        
+        log(`Game state updated: Round ${currentRound}`, 'info');
+    }
+    
+    function handleRoundState(data) {
+        currentRound = data.round;
+        currentRoundInput.value = currentRound;
+        
+        if (data.state === 'started') {
+            gameActive = true;
+            buzzBtn.disabled = false;
+            startRoundBtn.disabled = true;
+            endRoundBtn.disabled = false;
+            log(`Round ${currentRound} started`, 'success');
+        } else if (data.state === 'ended') {
+            gameActive = false;
+            buzzBtn.disabled = true;
+            startRoundBtn.disabled = false;
+            endRoundBtn.disabled = true;
+            log(`Round ${currentRound} ended`, 'warning');
+        }
+    }
+    
+    // Auto-connect if game code is provided
+    if (gameCodeInput.value.trim()) {
+        connectBtn.click();
+    }
+</script>
+{% endblock %}

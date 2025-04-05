@@ -1,0 +1,82 @@
+{% extends 'game/base.html' %}
+
+{% block title %}Buzz Quiz Game - Home{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 text-center">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h2 class="card-title">Welcome to Buzz Quiz Game</h2>
+                <p class="card-text">
+                    An interactive quiz game platform where players can buzz in to answer questions.
+                    Perfect for classroom quizzes, trivia nights, or friendly competitions!
+                </p>
+            </div>
+        </div>
+
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title">Host a Game</h3>
+                        <p class="card-text">Create a new game session, invite players, and control the quiz flow.</p>
+                        <a href="{% url 'host_create' %}" class="btn btn-primary">Host a Game</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3 class="card-title">Join a Game</h3>
+                        <p class="card-text">Enter a game code to join an existing quiz session as a player.</p>
+                        <form action="javascript:joinGame();" class="mt-3">
+                            <div class="input-group">
+                                <input type="text" id="game_code" class="form-control" placeholder="Enter game code" required>
+                                <button type="submit" class="btn btn-success">Join</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <h3 class="card-title">How It Works</h3>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            <h4>1. Create a Game</h4>
+                            <p>The host creates a game and gets a unique game code.</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            <h4>2. Players Join</h4>
+                            <p>Players scan the QR code or enter the game code to join.</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            <h4>3. Play the Quiz</h4>
+                            <p>The host asks questions, and players buzz in to answer.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function joinGame() {
+        const gameCode = document.getElementById('game_code').value.trim().toUpperCase();
+        if (gameCode) {
+            window.location.href = `/player/join/${gameCode}/`;
+        }
+    }
+</script>
+{% endblock %}

@@ -1,0 +1,22 @@
+{% extends 'game/base.html' %}
+
+{% block title %}Error - Buzz Quiz Game{% endblock %}
+
+{% block header %}Oops! Something went wrong{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body text-center">
+                <div class="alert alert-danger mb-4">
+                    <h4 class="alert-heading">Error</h4>
+                    <p>{{ error_message }}</p>
+                </div>
+                
+                <a href="{{ back_url }}" class="btn btn-primary">Back to Home</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

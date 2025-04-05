@@ -1,0 +1,47 @@
+{% extends 'game/base.html' %}
+
+{% block title %}Create a New Game{% endblock %}
+
+{% block header %}Create a New Game{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="card-title">Create a New Quiz Game</h2>
+                
+                <form method="post" action="{% url 'host_create' %}">
+                    {% csrf_token %}
+                    
+                    <div class="mb-3">
+                        <label for="game_name" class="form-label">Game Name</label>
+                        <input type="text" class="form-control" id="game_name" name="game_name" 
+                            placeholder="e.g., Science Quiz, Trivia Night" required>
+                        <div class="form-text">Give your game a descriptive name that players will recognize.</div>
+                    </div>
+                    
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">Create Game</button>
+                        <a href="{% url 'home' %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-body">
+                <h3 class="card-title">How It Works</h3>
+                <ol class="list-group list-group-numbered">
+                    <li class="list-group-item">After creating a game, you'll get a unique game code</li>
+                    <li class="list-group-item">Share the code or QR code with players so they can join</li>
+                    <li class="list-group-item">Start rounds when you're ready to ask questions</li>
+                    <li class="list-group-item">Players will buzz in to answer questions</li>
+                    <li class="list-group-item">You'll see who buzzed first, second, etc., in real-time</li>
+                    <li class="list-group-item">Mark answers as correct or incorrect to keep score</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,65 @@
+{% extends 'game/base.html' %}
+
+{% block title %}WebSocket Connection Test{% endblock %}
+
+{% block header %}WebSocket Connection Test{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h3 class="card-title h5 mb-0">WebSocket Diagnostics</h3>
+            </div>
+            <div class="card-body">
+                <p>This page tests WebSocket connectivity to the game server.</p>
+                
+                <div class="mb-4">
+                    <h4>Game Information</h4>
+                    <ul class="list-group mb-3">
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Game Code
+                            <span class="badge bg-primary">{{ game_code }}</span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            WebSocket URL
+                            <code id="ws-url"></code>
+                        </li>
+                    </ul>
+                </div>
+                
+                <div id="websocket-test-container" data-game-code="{{ game_code }}">
+                    <!-- WebSocket test output will appear here -->
+                </div>
+                
+                <div class="mt-4">
+                    <h4>Troubleshooting</h4>
+                    <ul>
+                        <li>Make sure the server is running with Daphne or another ASGI server</li>
+                        <li>Check that your browser supports WebSockets</li>
+                        <li>Ensure the game code is valid</li>
+                        <li>Check server logs for any exceptions</li>
+                    </ul>
+                    
+                    <div class="alert alert-info">
+                        <strong>Tip:</strong> To run the server with proper WebSocket support, use:
+                        <pre>./run_server.sh</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Display the WebSocket URL
+    document.addEventListener('DOMContentLoaded', function() {
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        const wsUrl = `${wsProtocol}${window.location.host}/ws/game/{{ game_code }}/`;
+        document.getElementById('ws-url').textContent = wsUrl;
+    });
+</script>
+<script src="/static/js/websocket_test.js"></script>
+{% endblock %}

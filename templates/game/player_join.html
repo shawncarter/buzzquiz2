@@ -1,0 +1,148 @@
+{% extends 'game/base.html' %}
+
+{% block title %}Join Game: {{ game.name }}{% endblock %}
+
+{% block header %}Join: {{ game.name }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h2 class="card-title h5 mb-0">Join "{{ game.name }}" (Code: {{ game.code }})</h2>
+            </div>
+            <div class="card-body">
+                <form id="join-form">
+                    <div class="mb-3">
+                        <label for="player_name" class="form-label">Your Name</label>
+                        <input type="text" class="form-control" id="player_name" name="player_name" 
+                            placeholder="Enter your name" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="buzzer_sound" class="form-label">Choose Buzzer Sound</label>
+                        <select class="form-select" id="buzzer_sound" name="buzzer_sound">
+                            {% for sound in buzzer_sounds %}
+                                <option value="{{ sound.id }}">{{ sound.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="mb-3 text-center">
+                        <button type="button" class="btn btn-secondary" onclick="previewSound()">
+                            Test Sound
+                        </button>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Join Game</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const deviceId = generateDeviceId();
+    const gameCode = '{{ game.code }}';
+    // Sound settings (in a production app, these would be real audio files)
+    const soundMap = {
+        'default': '/static/sounds/default.mp3',
+        'bell': '/static/sounds/bell.mp3',
+        'buzzer': '/static/sounds/buzzer.mp3',
+        'ding': '/static/sounds/ding.mp3',
+        'horn': '/static/sounds/horn.mp3'
+    };
+    
+    // In this development version, we'll use the Web Audio API to generate tones instead
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Initialize audio elements with fallback to generated tones
+    const audioElements = {};
+    const toneFrequencies = {
+        'default': 440, // A4 note
+        'bell': 554.37, // C#5 note
+        'buzzer': 261.63, // C4 note
+        'ding': 659.25, // E5 note
+        'horn': 349.23 // F4 note
+    };
+    
+    document.getElementById('join-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const playerName = document.getElementById('player_name').value.trim();
+        const buzzerSound = document.getElementById('buzzer_sound').value;
+        
+        if (!playerName) {
+            alert('Please enter your name');
+            return;
+        }
+        
+        // Store player info in session storage
+        sessionStorage.setItem('playerName', playerName);
+        sessionStorage.setItem('deviceId', deviceId);
+        sessionStorage.setItem('buzzerSound', buzzerSound);
+        sessionStorage.setItem('gameCode', gameCode);
+        
+        // Redirect to the game page
+        window.location.href = `/player/game/${gameCode}/${encodeURIComponent(playerName)}/`;
+    });
+    
+    function previewSound() {
+        const selectedSound = document.getElementById('buzzer_sound').value;
+        const frequency = toneFrequencies[selectedSound];
+        
+        // Create oscillator for tone generation
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.type = selectedSound === 'buzzer' ? 'sawtooth' : 'sine';
+        oscillator.frequency.value = frequency;
+        
+        gainNode.gain.value = 0.3;
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        // Start and stop the tone after a short duration
+        oscillator.start();
+        
+        // Different envelope for different sounds
+        switch(selectedSound) {
+            case 'bell':
+            case 'ding':
+                // Short decay for bell-like sounds
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+                setTimeout(() => oscillator.stop(), 500);
+                break;
+            case 'buzzer':
+                // Buzzer sound with modulation
+                oscillator.frequency.exponentialRampToValueAtTime(
+                    frequency * 0.8, audioContext.currentTime + 0.1
+                );
+                setTimeout(() => oscillator.stop(), 300);
+                break;
+            case 'horn':
+                // Horn with slight attack
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.8);
+                setTimeout(() => oscillator.stop(), 800);
+                break;
+            default:
+                // Default sound
+                setTimeout(() => {
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.2);
+                    setTimeout(() => oscillator.stop(), 200);
+                }, 100);
+        }
+    }
+    
+    function generateDeviceId() {
+        // Generate a new random device ID each time to allow multiple players on same computer
+        // Add timestamp to ensure uniqueness
+        return 'device_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+    }
+</script>
+{% endblock %}

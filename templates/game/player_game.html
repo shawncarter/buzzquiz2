@@ -1,0 +1,504 @@
+{% extends 'game/base.html' %}
+
+{% block title %}Game: {{ game.name }}{% endblock %}
+
+{% block header %}{{ game.name }} <span class="badge bg-primary">Round <span id="current-round">{{ game.current_round }}</span></span>{% endblock %}
+
+{% block extra_css %}
+<style>
+    .buzzer-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        margin: 20px 0;
+    }
+    
+    .buzzer-button {
+        width: 200px;
+        height: 200px;
+        border-radius: 50%;
+        background-color: #dc3545;
+        color: white;
+        font-size: 24px;
+        font-weight: bold;
+        text-transform: uppercase;
+        border: none;
+        box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        transition: all 0.1s ease;
+        outline: none;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .buzzer-button:active {
+        transform: scale(0.95);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    }
+    
+    .buzzer-button.active {
+        background-color: #28a745;
+    }
+    
+    .buzzer-button.inactive {
+        background-color: #6c757d;
+        cursor: not-allowed;
+    }
+    
+    .buzzer-button::after {
+        content: "";
+        display: block;
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+        background-image: radial-gradient(circle, #fff 10%, transparent 10.01%);
+        background-repeat: no-repeat;
+        background-position: 50%;
+        transform: scale(10, 10);
+        opacity: 0;
+        transition: transform 0.5s, opacity 1s;
+    }
+    
+    .buzzer-button:active::after {
+        transform: scale(0, 0);
+        opacity: 0.3;
+        transition: 0s;
+    }
+    
+    .status-container {
+        margin-top: 20px;
+        text-align: center;
+    }
+    
+    .player-list {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    
+    .buzz-position {
+        font-size: 3rem;
+        font-weight: bold;
+        color: #495057;
+    }
+    
+    .buzz-position.first {
+        color: #ffc107;
+    }
+    
+    .buzz-position.second {
+        color: #6c757d;
+    }
+    
+    .buzz-position.third {
+        color: #fd7e14;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-body text-center">
+                <h2 id="player-name" class="h4 mb-1">{{ player_name }}</h2>
+                <div id="player-score" class="badge bg-primary mb-3">Score: 0</div>
+                <div class="mb-3">
+                    <small class="text-muted"><a href="{% url 'websocket_test' game_code=game.code %}" target="_blank">Connection Diagnostics</a></small>
+                </div>
+                
+                <div id="status-message" class="alert alert-info">
+                    Waiting for the host to start the game...
+                </div>
+                
+                <div class="buzzer-container">
+                    <button id="buzzer" class="buzzer-button inactive" disabled>
+                        Buzz!
+                    </button>
+                </div>
+                
+                <div id="buzz-position" class="mt-3">
+                    <!-- Buzz position will appear here -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <h3 class="card-title h5 mb-0">Leaderboard</h3>
+                <span class="badge bg-light text-dark" id="player-count">0</span>
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush player-list" id="player-list">
+                    <li class="list-group-item text-center text-muted">
+                        Loading players...
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Get player info from session storage
+    const playerName = sessionStorage.getItem('playerName') || '{{ player_name }}';
+    const deviceId = sessionStorage.getItem('deviceId') || 'unknown_device';
+    const buzzerSound = sessionStorage.getItem('buzzerSound') || 'default';
+    const gameCode = sessionStorage.getItem('gameCode') || '{{ game.code }}';
+    
+    // In this development version, we'll use the Web Audio API to generate tones
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Sound frequency mapping
+    const toneFrequencies = {
+        'default': 440, // A4 note
+        'bell': 554.37, // C#5 note
+        'buzzer': 261.63, // C4 note
+        'ding': 659.25, // E5 note
+        'horn': 349.23 // F4 note
+    };
+    
+    // Game state
+    const gameState = {
+        connected: false,
+        roundActive: false,
+        hasBuzzed: false,
+        playerId: null,
+        buzzPosition: null,
+        currentRound: {{ game.current_round }},
+        timeOffset: 0
+    };
+    
+    // DOM Elements
+    const buzzerButton = document.getElementById('buzzer');
+    const statusMessage = document.getElementById('status-message');
+    const playerNameElement = document.getElementById('player-name');
+    const playerScoreElement = document.getElementById('player-score');
+    const buzzPositionElement = document.getElementById('buzz-position');
+    const currentRoundElement = document.getElementById('current-round');
+    const playerListElement = document.getElementById('player-list');
+    const playerCountElement = document.getElementById('player-count');
+    
+    // Update player name display
+    playerNameElement.textContent = playerName;
+    
+    // WebSocket Connection
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    const wsUrl = wsProtocol + window.location.host + '/ws/game/' + gameCode + '/';
+    const gameSocket = new WebSocket(wsUrl);
+    
+    console.log(`Connecting to WebSocket at ${wsUrl}`);
+    
+    gameSocket.onopen = function(e) {
+        console.log('WebSocket connection established');
+        
+        // Register with the game
+        registerPlayer();
+        
+        // Start time synchronization
+        syncTime();
+        setInterval(syncTime, 30000); // Sync every 30 seconds
+    };
+    
+    gameSocket.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+        console.log(`Received message: ${data.type}`, data);
+        
+        switch(data.type) {
+            case 'join_confirmed':
+                handleJoinConfirmed(data);
+                break;
+            case 'game_state':
+                updateGameState(data);
+                break;
+            case 'player_list':
+                updatePlayerList(data.players);
+                break;
+            case 'buzz_order':
+                updateBuzzOrder(data.ordered_buzzes);
+                break;
+            case 'round_state':
+                updateRoundState(data.state, data.round);
+                console.log(`Round state updated to: ${data.state}, round: ${data.round}`);
+                break;
+            case 'sync_time_response':
+                handleTimeSync(data);
+                break;
+            case 'pong':
+                console.log('Received pong response, connection is working');
+                break;
+            case 'error':
+                console.error('Error from server:', data.message);
+                statusMessage.textContent = `Error: ${data.message}`;
+                statusMessage.className = 'alert alert-danger';
+                break;
+        }
+    };
+    
+    gameSocket.onclose = function(e) {
+        gameState.connected = false;
+        statusMessage.textContent = 'Connection lost. Please refresh the page.';
+        statusMessage.className = 'alert alert-danger';
+        buzzerButton.disabled = true;
+        buzzerButton.classList.add('inactive');
+    };
+    
+    // Buzzer click event
+    buzzerButton.addEventListener('click', function() {
+        if (!gameState.roundActive || gameState.hasBuzzed) return;
+        
+        // Get timestamp adjusted for time offset
+        const now = Date.now();
+        const adjustedTime = now + gameState.timeOffset;
+        
+        // Play buzzer sound using Web Audio API
+        playBuzzerSound();
+        
+        // Send buzz event
+        gameSocket.send(JSON.stringify({
+            'type': 'buzz',
+            'player_id': gameState.playerId,
+            'timestamp': adjustedTime,
+            'round': gameState.currentRound
+        }));
+        
+        // Update UI
+        buzzerButton.classList.add('active');
+        buzzerButton.disabled = true;
+        gameState.hasBuzzed = true;
+        statusMessage.textContent = 'Buzz recorded! Waiting for results...';
+        statusMessage.className = 'alert alert-success';
+    });
+    
+    // Game functions
+    function registerPlayer() {
+        gameSocket.send(JSON.stringify({
+            'type': 'join_game',
+            'name': playerName,
+            'device_id': deviceId,
+            'buzzer_sound': buzzerSound
+        }));
+    }
+    
+    function syncTime() {
+        gameSocket.send(JSON.stringify({
+            'type': 'sync_time',
+            'client_time': Date.now()
+        }));
+    }
+    
+    // Message handlers
+    function handleJoinConfirmed(data) {
+        gameState.connected = true;
+        gameState.playerId = data.player_id;
+        
+        // Update player name if it was changed due to duplicates
+        if (data.actual_name && data.actual_name !== playerName) {
+            const originalName = playerName;
+            playerName = data.actual_name;
+            playerNameElement.textContent = playerName;
+            console.log('Name was changed to avoid duplicates:', playerName);
+            // Store the updated name
+            sessionStorage.setItem('playerName', playerName);
+            
+            // Notify the user
+            statusMessage.textContent = `Your name was changed to ${playerName} because ${originalName} was already taken.`;
+            statusMessage.className = 'alert alert-warning';
+            
+            // After 3 seconds, change to the normal message
+            setTimeout(() => {
+                statusMessage.textContent = 'Connected! Waiting for the game to start...';
+                statusMessage.className = 'alert alert-info';
+            }, 3000);
+        } else {
+            statusMessage.textContent = 'Connected! Waiting for the game to start...';
+            statusMessage.className = 'alert alert-info';
+        }
+    }
+    
+    function updateGameState(data) {
+        gameState.currentRound = data.current_round;
+        currentRoundElement.textContent = gameState.currentRound;
+        updatePlayerList(data.players);
+    }
+    
+    function updatePlayerList(players) {
+        playerListElement.innerHTML = '';
+        
+        if (players.length === 0) {
+            const emptyItem = document.createElement('li');
+            emptyItem.className = 'list-group-item text-center text-muted';
+            emptyItem.textContent = 'No players have joined yet';
+            playerListElement.appendChild(emptyItem);
+        } else {
+            // Sort players by score (descending)
+            players.sort((a, b) => b.score - a.score);
+            
+            players.forEach((player, index) => {
+                // Update our score if this is us
+                if (player.id === gameState.playerId) {
+                    playerScoreElement.textContent = `Score: ${player.score}`;
+                }
+                
+                const playerItem = document.createElement('li');
+                playerItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+                
+                // Highlight our player
+                if (player.id === gameState.playerId) {
+                    playerItem.classList.add('bg-light');
+                }
+                
+                playerItem.innerHTML = `
+                    <div>
+                        <span class="badge bg-secondary me-2">#${index + 1}</span>
+                        ${player.name}
+                    </div>
+                    <span class="badge bg-primary">${player.score}</span>
+                `;
+                
+                playerListElement.appendChild(playerItem);
+            });
+        }
+        
+        playerCountElement.textContent = players.length;
+    }
+    
+    function updateBuzzOrder(buzzes) {
+        gameState.buzzPosition = null;
+        buzzPositionElement.innerHTML = '';
+        
+        for (let i = 0; i < buzzes.length; i++) {
+            if (buzzes[i].player_id === gameState.playerId) {
+                gameState.buzzPosition = i + 1;
+                
+                let positionClass = '';
+                if (i === 0) positionClass = 'first';
+                else if (i === 1) positionClass = 'second';
+                else if (i === 2) positionClass = 'third';
+                
+                const timestamp = buzzes[i].timestamp;
+                buzzPositionElement.innerHTML = `
+                    <div class="buzz-position ${positionClass}">#${i + 1}</div>
+                    <div>Your position</div>
+                    <div class="mt-2 badge bg-secondary">${timestamp} ms</div>
+                `;
+                
+                break;
+            }
+        }
+    }
+    
+    function updateRoundState(state, round) {
+        gameState.currentRound = round;
+        currentRoundElement.textContent = round;
+        
+        console.log(`Updating round state to ${state} for round ${round}, buzzer active: ${gameState.roundActive}`);
+        
+        if (state === 'started') {
+            // Round started
+            gameState.roundActive = true;
+            gameState.hasBuzzed = false;
+            gameState.buzzPosition = null;
+            
+            statusMessage.textContent = 'Round active! Click to buzz in!';
+            statusMessage.className = 'alert alert-success';
+            
+            // Enable buzzer
+            buzzerButton.disabled = false;
+            buzzerButton.classList.remove('inactive');
+            buzzerButton.classList.remove('active');
+            
+            buzzPositionElement.innerHTML = '';
+            
+            console.log('Buzzer enabled for new round');
+            
+            // Visual flash to indicate round start
+            buzzerButton.classList.add('buzzing');
+            setTimeout(() => buzzerButton.classList.remove('buzzing'), 600);
+            
+        } else if (state === 'ended') {
+            // Round ended
+            gameState.roundActive = false;
+            
+            if (gameState.hasBuzzed) {
+                statusMessage.textContent = 'Round ended. Waiting for the next round...';
+            } else {
+                statusMessage.textContent = 'Round ended. You didn\'t buzz in this round.';
+            }
+            
+            statusMessage.className = 'alert alert-secondary';
+            buzzerButton.disabled = true;
+            buzzerButton.classList.add('inactive');
+            buzzerButton.classList.remove('active');
+            
+            console.log('Buzzer disabled - round ended');
+        }
+    }
+    
+    function handleTimeSync(data) {
+        const receiveTime = Date.now();
+        const roundTripTime = receiveTime - data.client_time;
+        const oneWayLatency = Math.floor(roundTripTime / 2);
+        
+        // Calculate the offset between our clock and the server's clock
+        const serverTimeAtReceive = data.server_time + oneWayLatency;
+        gameState.timeOffset = serverTimeAtReceive - receiveTime;
+        
+        console.log(`Time offset: ${gameState.timeOffset}ms (RTT: ${roundTripTime}ms)`);
+    }
+    
+    function playBuzzerSound() {
+        const frequency = toneFrequencies[buzzerSound];
+        
+        // Create oscillator for tone generation
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.type = buzzerSound === 'buzzer' ? 'sawtooth' : 'sine';
+        oscillator.frequency.value = frequency;
+        
+        gainNode.gain.value = 0.3;
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        // Start and stop the tone after a short duration
+        oscillator.start();
+        
+        // Different envelope for different sounds
+        switch(buzzerSound) {
+            case 'bell':
+            case 'ding':
+                // Short decay for bell-like sounds
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+                setTimeout(() => oscillator.stop(), 500);
+                break;
+            case 'buzzer':
+                // Buzzer sound with modulation
+                oscillator.frequency.exponentialRampToValueAtTime(
+                    frequency * 0.8, audioContext.currentTime + 0.1
+                );
+                setTimeout(() => oscillator.stop(), 300);
+                break;
+            case 'horn':
+                // Horn with slight attack
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.8);
+                setTimeout(() => oscillator.stop(), 800);
+                break;
+            default:
+                // Default sound
+                setTimeout(() => {
+                    gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.2);
+                    setTimeout(() => oscillator.stop(), 200);
+                }, 100);
+        }
+    }
+</script>
+{% endblock %}
