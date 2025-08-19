@@ -43,7 +43,7 @@ An interactive web-based quiz game platform where players can buzz in to answer 
 
 5. Run the development server:
    ```
-   python manage.py runserver
+   ./run_server.sh
    ```
 
 6. Visit `http://127.0.0.1:8000/` in your browser.
@@ -57,6 +57,26 @@ An interactive web-based quiz game platform where players can buzz in to answer 
 5. **System records buzzes**: The system records the buzz order with millisecond precision.
 6. **Host sees results**: The host sees the ordered list of players who buzzed in.
 7. **Host judges answers**: The host marks answers as correct/incorrect and awards points.
+
+## Screenshots
+
+### Homepage
+![Homepage](images/homepage.png)
+
+### Game Creation
+![Create Game](images/create_game.png)
+
+### Player Join
+![Player Join](images/player_join.png)
+
+### Game Lobby
+![Lobby](images/lobby.png)
+
+### Player Ready State
+![Player Ready](images/player_ready.png)
+
+### Quiz Master Ready
+![Quiz Master Ready](images/quiz_master_ready.png)
 
 ## Production Deployment
 
